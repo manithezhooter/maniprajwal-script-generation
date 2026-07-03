@@ -1,0 +1,50 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  dob       DateTime
+  role      String   @default("user") // "user" or "admin"
+  createdAt DateTime @default(now())
+  scripts   Script[]
+}
+
+model Script {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prompt         String
+  improvedPrompt String
+  language       String
+  duration       Int      // 15, 30, 45, 60 seconds
+  niche          String
+  readingLevel   String
+  drafts         Draft[]
+  selectedDraftId String? // ID of the draft the user saved
+  seoKeywords    String? // Comma-separated list
+  seoHashtags    String? // Space-separated list
+  seoCaption     String?
+  seoScore       Int?     // 0-100 score
+  createdAt      DateTime @default(now())
+}
+
+model Draft {
+  id          String   @id @default(uuid())
+  scriptId    String
+  script      Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  hook        String
+  body        String
+  isSensitive Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}

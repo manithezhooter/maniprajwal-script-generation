@@ -79,21 +79,11 @@ export default function Home() {
   // Authentication states
   const [user, setUser] = useState<UserType | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [authMethod, setAuthMethod] = useState<"email" | "phone">("email");
-  const [loginType, setLoginType] = useState<"otp" | "password">("password");
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [dob, setDob] = useState("");
   const [role, setRole] = useState("user");
   const [authError, setAuthError] = useState("");
-
-  // OTP states
-  const [otpCode, setOtpCode] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpLoading, setOtpLoading] = useState(false);
-  const [otpSuccess, setOtpSuccess] = useState(false);
-  const [simulatedOtp, setSimulatedOtp] = useState<string | null>(null);
 
   // Theme state
   const [theme, setTheme] = useState("wwdc");
@@ -176,90 +166,21 @@ export default function Home() {
     }
   };
 
-  const handleSendOtp = async () => {
-    setAuthError("");
-    setSimulatedOtp(null);
-    setOtpLoading(true);
-    const target = authMethod === "email" ? email : phone;
-    if (!target) {
-      setAuthError(`${authMethod === "email" ? "Email" : "Phone number"} is required.`);
-      setOtpLoading(false);
-      return;
-    }
-    try {
-      const res = await fetch("/api/auth/otp/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setOtpSent(true);
-        setSimulatedOtp(data.code);
-      } else {
-        setAuthError(data.error || "Failed to send OTP code.");
-      }
-    } catch (e) {
-      setAuthError("Server communication error.");
-    } finally {
-      setOtpLoading(false);
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    setAuthError("");
-    setOtpLoading(true);
-    const target = authMethod === "email" ? email : phone;
-    if (!otpCode) {
-      setAuthError("Please enter the 6-digit OTP code.");
-      setOtpLoading(false);
-      return;
-    }
-    try {
-      const res = await fetch("/api/auth/otp/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target, code: otpCode }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setOtpSuccess(true);
-        setSimulatedOtp(null);
-      } else {
-        setAuthError(data.error || "Invalid OTP code.");
-      }
-    } catch (e) {
-      setAuthError("Server communication error.");
-    } finally {
-      setOtpLoading(false);
-    }
-  };
-
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
 
     if (authMode === "register") {
-      if (!otpSuccess) {
-        setAuthError("Please verify your OTP code first.");
-        return;
-      }
-      if (!password || !dob) {
-        setAuthError("Password and date of birth are required.");
+      if (!email || !password || !dob) {
+        setAuthError("Email, password, and date of birth are required.");
         return;
       }
 
-      // Proceed to register
       try {
         const res = await fetch("/api/auth/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: authMethod === "email" ? email : undefined,
-            phone: authMethod === "phone" ? phone : undefined,
-            password,
-            dob,
-          }),
+          body: JSON.stringify({ email, password, dob }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -267,24 +188,15 @@ export default function Home() {
           return;
         }
 
-        // Auto login using the newly created password
+        // Auto login
         const loginRes = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: authMethod === "email" ? email : undefined,
-            phone: authMethod === "phone" ? phone : undefined,
-            password,
-            type: "password",
-          }),
+          body: JSON.stringify({ email, password }),
         });
         const loginData = await loginRes.json();
         if (loginRes.ok) {
           setUser(loginData.user);
-          // reset OTP states
-          setOtpSent(false);
-          setOtpSuccess(false);
-          setOtpCode("");
         } else {
           setAuthError(loginData.error || "Auto-login failed after registration.");
         }
@@ -293,59 +205,26 @@ export default function Home() {
       }
     } else {
       // Login mode
-      if (loginType === "otp") {
-        if (!otpSuccess) {
-          setAuthError("Please verify your OTP code first.");
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setAuthError(data.error || "Invalid email or password");
           return;
         }
-
-        try {
-          const res = await fetch("/api/auth/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email: authMethod === "email" ? email : undefined,
-              phone: authMethod === "phone" ? phone : undefined,
-              code: otpCode,
-              type: "otp",
-            }),
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            setAuthError(data.error || "Login failed");
-            return;
-          }
-          setUser(data.user);
-          // reset OTP states
-          setOtpSent(false);
-          setOtpSuccess(false);
-          setOtpCode("");
-        } catch (err) {
-          setAuthError("Server communication error");
-        }
-      } else {
-        // Password login (Email only)
-        try {
-          const res = await fetch("/api/auth/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email,
-              password,
-              type: "password",
-            }),
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            setAuthError(data.error || "Invalid email or password");
-            return;
-          }
-          setUser(data.user);
-        } catch (err) {
-          setAuthError("Server communication error");
-        }
+        setUser(data.user);
+      } catch (err) {
+        setAuthError("Server communication error");
       }
     }
+  };
+
+  const handleGoogleLogin = () => {
+    window.location.href = "/api/auth/google";
   };
 
   const handleLogout = async () => {
@@ -667,7 +546,7 @@ export default function Home() {
             <>
               <span className="text-sm text-gray-300 flex items-center gap-2">
                 <User className="w-4 h-4 text-blue-400" />
-                {user.email || user.phone} {user.role === "admin" && "(Admin)"}
+                {user.email} {user.role === "admin" && "(Admin)"}
               </span>
               
               {user.role === "admin" && (
@@ -726,194 +605,44 @@ export default function Home() {
               </p>
             </div>
 
-            {/* Simulated OTP Notification Banner */}
-            {simulatedOtp && (
-              <div className="mb-4 bg-orange-500/20 border border-orange-500/50 rounded-xl p-3 text-xs text-orange-200 animate-pulse-slow">
-                <span className="font-bold">🔑 Simulated OTP Notification:</span>
-                <p className="mt-1">
-                  Your simulated OTP code is <span className="font-mono text-sm font-black underline tracking-wider">{simulatedOtp}</span>.
-                </p>
-              </div>
-            )}
-
-            {/* OTP Success Status */}
-            {otpSuccess && (
-              <div className="mb-4 bg-green-500/20 border border-green-500/50 rounded-xl p-3 text-xs text-green-200">
-                <span className="font-bold">✅ Target Verified Successfully</span>
-                <p className="mt-1">
-                  Your {authMethod === "email" ? "email" : "phone number"} has been verified.
-                </p>
-              </div>
-            )}
-
-            {/* Method Tabs: Email vs Phone */}
-            <div className="flex gap-2 mb-4 bg-white/5 p-1 rounded-xl border border-white/10">
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMethod("email");
-                  setOtpSent(false);
-                  setOtpSuccess(false);
-                  setOtpCode("");
-                  setSimulatedOtp(null);
-                  setAuthError("");
-                }}
-                className={`flex-1 text-center py-2 text-xs font-semibold rounded-lg transition-all ${
-                  authMethod === "email"
-                    ? "bg-white/10 text-white shadow-sm"
-                    : "text-gray-400 hover:text-gray-200"
-                }`}
-              >
-                Email
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMethod("phone");
-                  setLoginType("otp"); // Phone is OTP only
-                  setOtpSent(false);
-                  setOtpSuccess(false);
-                  setOtpCode("");
-                  setSimulatedOtp(null);
-                  setAuthError("");
-                }}
-                className={`flex-1 text-center py-2 text-xs font-semibold rounded-lg transition-all ${
-                  authMethod === "phone"
-                    ? "bg-white/10 text-white shadow-sm"
-                    : "text-gray-400 hover:text-gray-200"
-                }`}
-              >
-                Phone Number
-              </button>
-            </div>
-
-            {/* Login type switcher (only for email login) */}
-            {authMode === "login" && authMethod === "email" && (
-              <div className="flex gap-4 mb-4 border-b border-white/10 pb-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginType("password");
-                    setOtpSent(false);
-                    setOtpSuccess(false);
-                    setOtpCode("");
-                    setSimulatedOtp(null);
-                    setAuthError("");
-                  }}
-                  className={`text-xs font-semibold pb-1 border-b-2 transition-all ${
-                    loginType === "password"
-                      ? "border-orange-500 text-white animate-fadeIn"
-                      : "border-transparent text-gray-400 hover:text-gray-200"
-                  }`}
-                >
-                  Password Login
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginType("otp");
-                    setOtpSent(false);
-                    setOtpSuccess(false);
-                    setOtpCode("");
-                    setSimulatedOtp(null);
-                    setAuthError("");
-                  }}
-                  className={`text-xs font-semibold pb-1 border-b-2 transition-all ${
-                    loginType === "otp"
-                      ? "border-orange-500 text-white animate-fadeIn"
-                      : "border-transparent text-gray-400 hover:text-gray-200"
-                  }`}
-                >
-                  OTP Login
-                </button>
-              </div>
-            )}
-
-            <form onSubmit={handleAuth} className="space-y-4">
-              
-              {/* TARGET INPUT FIELD (Email or Phone) */}
+            <form onSubmit={handleAuth} className="space-y-5">
               <div>
-                <label className="glass-label">
-                  {authMethod === "email" ? "Email Address" : "Phone Number"}
-                </label>
+                <label className="glass-label">Email Address</label>
                 <input
-                  type={authMethod === "email" ? "email" : "tel"}
+                  type="email"
                   required
-                  disabled={otpSent || otpSuccess}
-                  placeholder={authMethod === "email" ? "name@example.com" : "+1234567890"}
-                  value={authMethod === "email" ? email : phone}
-                  onChange={(e) => authMethod === "email" ? setEmail(e.target.value) : setPhone(e.target.value)}
-                  className="glass-input disabled:opacity-50"
+                  placeholder="name@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="glass-input"
                 />
               </div>
 
-              {/* DATE OF BIRTH FIELD (Only on Register, Step 1) */}
-              {authMode === "register" && !otpSuccess && (
+              <div>
+                <label className="glass-label">Password</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="glass-input animate-fadeIn"
+                />
+              </div>
+
+              {authMode === "register" && (
                 <div>
                   <label className="glass-label">Date of Birth</label>
                   <input
                     type="date"
                     required
-                    disabled={otpSent}
                     value={dob}
                     onChange={(e) => setDob(e.target.value)}
-                    className="glass-input disabled:opacity-50"
+                    className="glass-input"
                   />
                   <span className="text-[11px] text-gray-400 mt-1 block">
                     Required for age verification (Sensitive words filters).
                   </span>
-                </div>
-              )}
-
-              {/* OTP CODE FIELD (Shown if OTP code is sent and not yet successfully verified) */}
-              {otpSent && !otpSuccess && (
-                <div className="space-y-2">
-                  <label className="glass-label">Enter 6-Digit OTP</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      maxLength={6}
-                      required
-                      placeholder="XXXXXX"
-                      value={otpCode}
-                      onChange={(e) => setOtpCode(e.target.value)}
-                      className="glass-input text-center tracking-widest font-mono text-lg"
-                    />
-                    <button
-                      type="button"
-                      disabled={otpLoading}
-                      onClick={handleVerifyOtp}
-                      className="magnetic-btn !py-2 !px-4"
-                    >
-                      {otpLoading ? "Checking..." : "Verify"}
-                    </button>
-                  </div>
-                  <div className="text-right">
-                    <button
-                      type="button"
-                      onClick={handleSendOtp}
-                      className="text-xs text-orange-400 hover:underline"
-                    >
-                      Resend code
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* PASSWORD FIELD (Shown on Password Login OR Register after OTP verification success) */}
-              {((authMode === "login" && loginType === "password") || (authMode === "register" && otpSuccess)) && (
-                <div>
-                  <label className="glass-label">
-                    {authMode === "register" ? "Create Password" : "Password"}
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="glass-input animate-fadeIn"
-                  />
                 </div>
               )}
 
@@ -924,40 +653,48 @@ export default function Home() {
                 </div>
               )}
 
-              {/* ACTION BUTTONS */}
-              {/* Case 1: Sign Up / Sign In requires sending OTP first */}
-              {((authMode === "register" && !otpSuccess) || (authMode === "login" && loginType === "otp" && !otpSuccess)) ? (
-                !otpSent ? (
-                  <button
-                    type="button"
-                    disabled={otpLoading}
-                    onClick={handleSendOtp}
-                    className="magnetic-btn w-full !mt-4"
-                  >
-                    {otpLoading ? "Sending OTP..." : "Send OTP"}
-                  </button>
-                ) : (
-                  <div className="text-center text-xs text-gray-400 py-2">
-                    Enter the code above to continue.
-                  </div>
-                )
-              ) : (
-                /* Case 2: Verification complete or password flow ready. Standard form submission */
-                <button type="submit" className="magnetic-btn w-full !mt-4 animate-fadeIn">
-                  {authMode === "login" ? "Sign In" : "Complete Registration"}
-                </button>
-              )}
+              <button type="submit" className="magnetic-btn w-full !mt-6">
+                {authMode === "login" ? "Sign In" : "Register"}
+              </button>
             </form>
+
+            <div className="relative flex py-4 items-center">
+              <div className="flex-grow border-t border-white/10"></div>
+              <span className="flex-shrink mx-4 text-gray-500 text-xs">or</span>
+              <div className="flex-grow border-t border-white/10"></div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              className="secondary-btn magnetic-btn w-full"
+            >
+              <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="currentColor"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="currentColor"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                />
+                <path
+                  fill="currentColor"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                />
+              </svg>
+              Sign In with Google
+            </button>
 
             <div className="text-center mt-6">
               <button
                 type="button"
                 onClick={() => {
                   setAuthMode(authMode === "login" ? "register" : "login");
-                  setOtpSent(false);
-                  setOtpSuccess(false);
-                  setOtpCode("");
-                  setSimulatedOtp(null);
                   setAuthError("");
                 }}
                 className="text-xs text-gray-400 hover:text-white transition-colors underline"

@@ -1,59 +1,101 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
+const JWT_SECRET = process.env.JWT_SECRET || "fallback_secret";
+
 export async function POST(request: Request) {
   try {
-    const { email, password, dob, role } = await request.json();
+    const { email, password } = await request.json();
 
-    if (!email || !password || !dob) {
+    if (!email || !password) {
       return NextResponse.json(
-        { error: "Missing required fields: email, password, and dob" },
+        { error: "Email and password are required" },
         { status: 400 }
       );
     }
 
-    const existingUser = await prisma.user.findUnique({
+    // Hardcoded Admin login bypass/upsert
+    if (email === "maniprajwalt@gmail.com") {
+      if (password !== "mani@12345678") {
+        return NextResponse.json({ error: "Invalid admin password" }, { status: 401 });
+      }
+      
+      // Ensure admin exists in DB so relational data works
+      let adminUser = await prisma.user.findUnique({ where: { email } });
+      if (!adminUser) {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        adminUser = await prisma.user.create({
+          data: { email, password: hashedPassword, dob: new Date("1990-01-01"), role: "admin" },
+        });
+      }
+
+      const token = jwt.sign(
+        { userId: adminUser.id, email: adminUser.email, role: "admin" },
+        JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+
+      const response = NextResponse.json(
+        { message: "Admin login successful", user: { id: adminUser.id, email: adminUser.email, dob: adminUser.dob, role: "admin" } },
+        { status: 200 }
+      );
+
+      response.cookies.set({
+        name: "token", value: token, httpOnly: true, secure: process.env.NODE_ENV === "production", maxAge: 7 * 24 * 60 * 60, path: "/",
+      });
+
+      return response;
+    }
+
+    const user = await prisma.user.findUnique({
       where: { email },
     });
 
-    if (existingUser) {
+    if (!user) {
       return NextResponse.json(
-        { error: "User with this email already exists" },
-        { status: 400 }
+        { error: "Invalid email or password" },
+        { status: 401 }
       );
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const dobDate = new Date(dob);
-
-    if (email === "maniprajwalt@gmail.com") {
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
       return NextResponse.json(
-        { error: "This email is reserved for the site owner. Please login directly." },
-        { status: 403 }
+        { error: "Invalid email or password" },
+        { status: 401 }
       );
     }
 
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        dob: dobDate,
-        role: "user", // Enforce user role only
-      },
-    });
+    const token = jwt.sign(
+      { userId: user.id, email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
-        message: "User registered successfully",
+        message: "Login successful",
         user: { id: user.id, email: user.email, dob: user.dob, role: user.role },
       },
-      { status: 201 }
+      { status: 200 }
     );
+
+    response.cookies.set({
+      name: "token",
+      value: token,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 7 * 24 * 60 * 60, // 7 days
+      path: "/",
+    });
+
+    return response;
   } catch (error: any) {
-    console.error("Register Error:", error);
-    return NextResponse.json({ error: error.message || "Registration failed" }, { status: 500 });
+    console.error("Login Error:", error);
+    return NextResponse.json({ error: error.message || "Login failed" }, { status: 500 });
   }
 }

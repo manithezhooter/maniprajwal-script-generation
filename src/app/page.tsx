@@ -21,7 +21,12 @@ import {
   Languages,
   BookOpen,
   Layout,
-  Palette
+  Palette,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Loader2
 } from "lucide-react";
 
 // Common language presets
@@ -74,6 +79,63 @@ interface ScriptType {
   createdAt: string;
 }
 
+const matchVoice = (languageName: string): SpeechSynthesisVoice | null => {
+  if (typeof window === "undefined" || !window.speechSynthesis) return null;
+  
+  const voices = window.speechSynthesis.getVoices();
+  const lowerLang = languageName.toLowerCase();
+  
+  const langCodeMap: { [key: string]: string } = {
+    english: "en",
+    spanish: "es",
+    french: "fr",
+    german: "de",
+    italian: "it",
+    japanese: "ja",
+    korean: "ko",
+    hindi: "hi",
+    bengali: "bn",
+    russian: "ru",
+    portuguese: "pt",
+    mandarin: "zh",
+    chinese: "zh",
+    cantonese: "zh",
+    arabic: "ar",
+    turkish: "tr",
+    vietnamese: "vi",
+    thai: "th",
+    indonesian: "id",
+    dutch: "nl",
+    swedish: "sv",
+    polish: "pl"
+  };
+  
+  const targetCode = langCodeMap[lowerLang] || "";
+  
+  let candidateVoices = voices.filter(v => {
+    const vLang = v.lang.toLowerCase();
+    return targetCode && (vLang.startsWith(targetCode) || vLang.includes("-" + targetCode) || vLang.includes("_" + targetCode));
+  });
+  
+  if (candidateVoices.length === 0) {
+    candidateVoices = voices.filter(v => v.name.toLowerCase().includes(lowerLang));
+  }
+  
+  if (candidateVoices.length === 0) {
+    candidateVoices = voices.filter(v => v.lang.toLowerCase().includes(lowerLang));
+  }
+  
+  if (candidateVoices.length > 0) {
+    const premiumVoice = candidateVoices.find(v => {
+      const name = v.name.toLowerCase();
+      return name.includes("natural") || name.includes("online") || name.includes("google") || name.includes("siri") || name.includes("neural");
+    });
+    return premiumVoice || candidateVoices[0];
+  }
+  
+  return voices.find(v => v.default) || voices[0] || null;
+};
+
 export default function Home() {
   const router = useRouter();
   // Authentication states
@@ -117,6 +179,19 @@ export default function Home() {
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [adminStats, setAdminStats] = useState<any>(null);
   const [adminLoading, setAdminLoading] = useState(false);
+
+  // Text-to-Speech State
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsPlaying, setTtsPlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1.0);
+  const [ttsError, setTtsError] = useState("");
+
+  // Load voices on mount for SpeechSynthesis
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.getVoices();
+    }
+  }, []);
 
   // 3D Card Hover Ref
   const cardRef = useRef<HTMLDivElement>(null);
@@ -458,6 +533,105 @@ export default function Home() {
       setAdminLoading(false);
     }
   };
+
+  const handleToggleTTS = () => {
+    if (!activeScript) return;
+    setTtsError("");
+
+    if (typeof window === "undefined" || !window.speechSynthesis) {
+      setTtsError("Text-to-Speech is not supported in this browser.");
+      return;
+    }
+
+    // If currently speaking
+    if (window.speechSynthesis.speaking) {
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+        setTtsPlaying(true);
+      } else {
+        window.speechSynthesis.pause();
+        setTtsPlaying(false);
+      }
+      return;
+    }
+
+    // Start speaking new text
+    const selectedDraft = activeScript.drafts.find(
+      (d) => d.id === activeScript.selectedDraftId
+    ) || activeScript.drafts[0];
+
+    const rawText = `${selectedDraft.hook}\n\n${selectedDraft.body}`;
+    // Strip bracket expressions (e.g. [EXCITED], [LAUGHTER]) so they aren't spoken
+    const cleanText = rawText.replace(/\[[^\]]+\]/g, "").trim();
+
+    setTtsLoading(true);
+
+    try {
+      // Cancel any ongoing speech
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      
+      // Match voice based on script language
+      const voice = matchVoice(activeScript.language);
+      if (voice) {
+        utterance.voice = voice;
+      }
+      
+      utterance.rate = playbackRate;
+
+      utterance.onstart = () => {
+        setTtsPlaying(true);
+        setTtsLoading(false);
+      };
+
+      utterance.onend = () => {
+        setTtsPlaying(false);
+      };
+
+      utterance.onerror = (e) => {
+        if (e.error !== "interrupted") {
+          console.error("SpeechSynthesis error", e);
+          setTtsError("Speech synthesis error occurred.");
+        }
+        setTtsPlaying(false);
+        setTtsLoading(false);
+      };
+
+      window.speechSynthesis.speak(utterance);
+    } catch (err: any) {
+      console.error("[TTS Error]", err);
+      setTtsError("Failed to initiate text to speech.");
+      setTtsLoading(false);
+    }
+  };
+
+  const handleStopTTS = () => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setTtsPlaying(false);
+    }
+  };
+
+  const handleSpeedChange = (rate: number) => {
+    setPlaybackRate(rate);
+    if (typeof window !== "undefined" && window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      setTtsPlaying(false);
+      setTimeout(() => {
+        handleToggleTTS();
+      }, 50);
+    }
+  };
+
+  // Clean up TTS audio on unmount
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   const downloadPDF = () => {
     if (!activeScript) return;
@@ -1071,6 +1245,87 @@ export default function Home() {
                         </button>
                       </div>
                     </div>
+
+                    {/* Text-to-Speech Panel */}
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-fadeIn">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-3 rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-400 ${ttsPlaying ? "animate-pulse" : ""}`}>
+                          <Volume2 className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-extrabold text-orange-400 uppercase tracking-widest block">
+                            Script Narration (AI Voice)
+                          </span>
+                          <span className="text-[11px] text-gray-400">
+                            Neural voice for <strong>{activeScript.language}</strong>
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {/* Speed controller */}
+                        <div className="flex items-center bg-black/30 border border-white/10 rounded-lg p-1 text-xs">
+                          {["0.8", "1.0", "1.2", "1.5"].map((speed) => (
+                            <button
+                              key={speed}
+                              onClick={() => handleSpeedChange(parseFloat(speed))}
+                              className={`px-2 py-1 rounded-md transition-colors ${
+                                playbackRate === parseFloat(speed)
+                                  ? "bg-orange-500 text-white font-semibold"
+                                  : "text-gray-400 hover:text-white"
+                              }`}
+                            >
+                              {speed}x
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Play/Pause Button */}
+                        <button
+                          onClick={handleToggleTTS}
+                          disabled={ttsLoading}
+                          className={`magnetic-btn !py-2 !px-4 !text-xs flex items-center gap-1.5 ${
+                            ttsPlaying ? "bg-red-500/80 hover:bg-red-500" : "bg-gradient-to-r from-blue-500 to-orange-500"
+                          }`}
+                        >
+                          {ttsLoading ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              Generating...
+                            </>
+                          ) : ttsPlaying ? (
+                            <>
+                              <Pause className="w-3.5 h-3.5" />
+                              Pause Speech
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-3.5 h-3.5" />
+                              Listen Script
+                            </>
+                          )}
+                        </button>
+
+                        {/* Stop Button */}
+                        {ttsPlaying && (
+                          <button
+                            onClick={handleStopTTS}
+                            className="secondary-btn magnetic-btn !py-2 !px-3 !text-xs flex items-center gap-1"
+                            title="Stop Audio"
+                          >
+                            <VolumeX className="w-3.5 h-3.5" />
+                            Stop
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {ttsError && (
+                      <div className="bg-red-950/40 border border-red-500/30 rounded-xl p-3 text-xs text-red-300 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                        <span>{ttsError}</span>
+                      </div>
+                    )}
 
                     <div className="space-y-4">
                       {/* Extract active hook */}

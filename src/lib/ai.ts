@@ -15,7 +15,7 @@ export async function callLLM(systemPrompt: string, userPrompt: string): Promise
           "X-Title": "Liquid Glass Script Generator",
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
+          model: "google/gemini-2.5-flash:free",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },

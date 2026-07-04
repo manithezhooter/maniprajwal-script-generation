@@ -1,7 +1,41 @@
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
 
 export async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
+  // Try OpenRouter first
+  if (OPENROUTER_API_KEY && !OPENROUTER_API_KEY.startsWith("your_") && OPENROUTER_API_KEY !== "") {
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          "HTTP-Referer": "https://maniprajwal-script-generation.vercel.app",
+          "X-Title": "Liquid Glass Script Generator",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.7,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return data.choices[0].message.content || "";
+      } else {
+        const errText = await response.text();
+        console.warn("OpenRouter API call failed, trying direct OpenAI. Details:", errText);
+      }
+    } catch (e) {
+      console.warn("OpenRouter call error, trying direct OpenAI:", e);
+    }
+  }
+
   // Try OpenAI first
   if (OPENAI_API_KEY && !OPENAI_API_KEY.startsWith("your_") && OPENAI_API_KEY !== "") {
     try {

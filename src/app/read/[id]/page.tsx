@@ -3,7 +3,7 @@
 import React, { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import { jsPDF } from "jspdf";
-import { ArrowLeft, Download, Eye, Sparkles, BookOpen, Clock, FileText, Check, ArrowRight } from "lucide-react";
+import { ArrowLeft, Download, Eye, Sparkles, BookOpen, Clock, FileText, Check, ArrowRight, Play, Pause, Volume2, VolumeX, Loader2, AlertTriangle } from "lucide-react";
 
 interface DraftType {
   id?: string;
@@ -28,6 +28,63 @@ interface ScriptType {
   createdAt: string;
 }
 
+const matchVoice = (languageName: string): SpeechSynthesisVoice | null => {
+  if (typeof window === "undefined" || !window.speechSynthesis) return null;
+  
+  const voices = window.speechSynthesis.getVoices();
+  const lowerLang = languageName.toLowerCase();
+  
+  const langCodeMap: { [key: string]: string } = {
+    english: "en",
+    spanish: "es",
+    french: "fr",
+    german: "de",
+    italian: "it",
+    japanese: "ja",
+    korean: "ko",
+    hindi: "hi",
+    bengali: "bn",
+    russian: "ru",
+    portuguese: "pt",
+    mandarin: "zh",
+    chinese: "zh",
+    cantonese: "zh",
+    arabic: "ar",
+    turkish: "tr",
+    vietnamese: "vi",
+    thai: "th",
+    indonesian: "id",
+    dutch: "nl",
+    swedish: "sv",
+    polish: "pl"
+  };
+  
+  const targetCode = langCodeMap[lowerLang] || "";
+  
+  let candidateVoices = voices.filter(v => {
+    const vLang = v.lang.toLowerCase();
+    return targetCode && (vLang.startsWith(targetCode) || vLang.includes("-" + targetCode) || vLang.includes("_" + targetCode));
+  });
+  
+  if (candidateVoices.length === 0) {
+    candidateVoices = voices.filter(v => v.name.toLowerCase().includes(lowerLang));
+  }
+  
+  if (candidateVoices.length === 0) {
+    candidateVoices = voices.filter(v => v.lang.toLowerCase().includes(lowerLang));
+  }
+  
+  if (candidateVoices.length > 0) {
+    const premiumVoice = candidateVoices.find(v => {
+      const name = v.name.toLowerCase();
+      return name.includes("natural") || name.includes("online") || name.includes("google") || name.includes("siri") || name.includes("neural");
+    });
+    return premiumVoice || candidateVoices[0];
+  }
+  
+  return voices.find(v => v.default) || voices[0] || null;
+};
+
 export default function ScriptReaderPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
   const { id } = use(params);
@@ -39,6 +96,19 @@ export default function ScriptReaderPage({ params }: { params: Promise<{ id: str
 
   // Focus mode state: index of the draft currently viewed in full page (null means side-by-side)
   const [focusedDraftIndex, setFocusedDraftIndex] = useState<number | null>(null);
+
+  // Text-to-Speech State
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsPlaying, setTtsPlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1.0);
+  const [ttsError, setTtsError] = useState("");
+
+  // Load voices on mount for SpeechSynthesis
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.getVoices();
+    }
+  }, []);
 
   // Fetch script details and apply theme
   useEffect(() => {
@@ -86,6 +156,99 @@ export default function ScriptReaderPage({ params }: { params: Promise<{ id: str
       alert("Error updating draft selection");
     }
   };
+
+  const handleToggleTTS = (draftIndex: number) => {
+    if (!script) return;
+    setTtsError("");
+
+    if (typeof window === "undefined" || !window.speechSynthesis) {
+      setTtsError("Text-to-Speech is not supported in this browser.");
+      return;
+    }
+
+    // If currently speaking
+    if (window.speechSynthesis.speaking) {
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+        setTtsPlaying(true);
+      } else {
+        window.speechSynthesis.pause();
+        setTtsPlaying(false);
+      }
+      return;
+    }
+
+    // Start speaking new text
+    const selectedDraft = script.drafts[draftIndex];
+    const rawText = `${selectedDraft.hook}\n\n${selectedDraft.body}`;
+    // Strip bracket expressions (e.g. [EXCITED], [LAUGHTER]) so they aren't spoken
+    const cleanText = rawText.replace(/\[[^\]]+\]/g, "").trim();
+
+    setTtsLoading(true);
+
+    try {
+      // Cancel any ongoing speech
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      
+      // Match voice based on script language
+      const voice = matchVoice(script.language);
+      if (voice) {
+        utterance.voice = voice;
+      }
+      
+      utterance.rate = playbackRate;
+
+      utterance.onstart = () => {
+        setTtsPlaying(true);
+        setTtsLoading(false);
+      };
+
+      utterance.onend = () => {
+        setTtsPlaying(false);
+      };
+
+      utterance.onerror = (e) => {
+        if (e.error !== "interrupted") {
+          console.error("SpeechSynthesis error", e);
+          setTtsError("Speech synthesis error occurred.");
+        }
+        setTtsPlaying(false);
+        setTtsLoading(false);
+      };
+
+      window.speechSynthesis.speak(utterance);
+    } catch (err: any) {
+      console.error("[TTS Error]", err);
+      setTtsError("Failed to initiate text to speech.");
+      setTtsLoading(false);
+    }
+  };
+
+  const handleStopTTS = () => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setTtsPlaying(false);
+    }
+  };
+
+  const handleSpeedChange = (rate: number) => {
+    setPlaybackRate(rate);
+    if (typeof window !== "undefined" && window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      setTtsPlaying(false);
+    }
+  };
+
+  // Clean up TTS audio on unmount
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   const downloadPDF = (draftIndex: number) => {
     if (!script) return;
@@ -296,6 +459,59 @@ export default function ScriptReaderPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
 
+        {/* Central Voice Settings Banner */}
+        <div className="glass-panel p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-fadeIn">
+          <div className="flex items-center gap-3">
+            <div className={`p-2.5 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400 ${ttsPlaying ? "animate-pulse" : ""}`}>
+              <Volume2 className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] font-extrabold text-orange-400 uppercase tracking-widest block">
+                Text-to-Speech Controller
+              </span>
+              <span className="text-xs text-gray-300">
+                Speed adjustments apply to all voice playbacks in <strong>{script.language}</strong>.
+              </span>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center bg-black/30 border border-white/10 rounded-lg p-1 text-xs">
+              {["0.8", "1.0", "1.2", "1.5"].map((speed) => (
+                <button
+                  key={speed}
+                  onClick={() => handleSpeedChange(parseFloat(speed))}
+                  className={`px-2 py-1 rounded-md transition-colors ${
+                    playbackRate === parseFloat(speed)
+                      ? "bg-orange-500 text-white font-semibold"
+                      : "text-gray-400 hover:text-white"
+                  }`}
+                >
+                  {speed}x
+                </button>
+              ))}
+            </div>
+
+            {ttsPlaying && (
+              <button
+                onClick={handleStopTTS}
+                className="secondary-btn magnetic-btn !py-2 !px-3 !text-xs flex items-center gap-1.5"
+                title="Stop Audio"
+              >
+                <VolumeX className="w-3.5 h-3.5" />
+                Stop Voice
+              </button>
+            )}
+          </div>
+        </div>
+
+        {ttsError && (
+          <div className="bg-red-950/40 border border-red-500/30 rounded-xl p-3 text-xs text-red-300 flex items-center gap-2 mb-6">
+            <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+            <span>{ttsError}</span>
+          </div>
+        )}
+
         {/* Conditional Layout Section */}
         {focusedDraftIndex === null ? (
           /* COMPARISON VIEW: Uncongested horizontally scrollable drafts list */
@@ -392,6 +608,31 @@ export default function ScriptReaderPage({ params }: { params: Promise<{ id: str
                       <Download className="w-3.5 h-3.5 text-gray-500" />
                       Export PDF
                     </button>
+
+                    <button
+                      onClick={() => handleToggleTTS(idx)}
+                      disabled={ttsLoading}
+                      className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-1.5 ${
+                        ttsPlaying ? "bg-red-500 text-white border-transparent" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                      }`}
+                    >
+                      {ttsLoading ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
+                          Synthesizing...
+                        </>
+                      ) : ttsPlaying ? (
+                        <>
+                          <Pause className="w-3.5 h-3.5 text-white" />
+                          Pause Voice
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5 text-gray-500" />
+                          Listen Script
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
               );
@@ -482,6 +723,31 @@ export default function ScriptReaderPage({ params }: { params: Promise<{ id: str
                     >
                       <Download className="w-4 h-4 text-gray-500" />
                       Export PDF
+                    </button>
+
+                    <button
+                      onClick={() => handleToggleTTS(focusedDraftIndex)}
+                      disabled={ttsLoading}
+                      className={`flex-grow py-3 px-4 rounded-xl font-bold transition-all border flex items-center justify-center gap-1.5 text-sm ${
+                        ttsPlaying ? "bg-red-500 text-white border-transparent" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                      }`}
+                    >
+                      {ttsLoading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                          Synthesizing...
+                        </>
+                      ) : ttsPlaying ? (
+                        <>
+                          <Pause className="w-4 h-4 text-white" />
+                          Pause Voice
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-4 h-4 text-gray-500" />
+                          Listen Script
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>

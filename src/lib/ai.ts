@@ -1,5 +1,5 @@
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
 
 export async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
   // Try OpenAI first
@@ -51,6 +51,11 @@ export async function callLLM(systemPrompt: string, userPrompt: string): Promise
                   text: `${systemPrompt}\n\nUser Prompt: ${userPrompt}`
                 }
               ]
+            }
+          ],
+          tools: [
+            {
+              googleSearch: {}
             }
           ],
           generationConfig: {
